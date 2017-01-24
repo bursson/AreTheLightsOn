@@ -8,6 +8,7 @@ import urllib
 import time
 import ConfigParser
 import json
+from database import Database
 import onionGpio
 
 CFG = ConfigParser.RawConfigParser()
@@ -16,7 +17,12 @@ CFG.read('/root/default.ini')
 
 DEBUG = int(CFG.get("cfg", "DEBUG"))
 
-def loop():
+def init():
+    """ Initialize the bot by creating or connecting to a database """
+    database = Database("bot.db")
+    return database
+
+def loop(database):
     """ Main loop running the bot """
     # Initialize the light sensor. Note that the Gpio library
     # returns strings...
@@ -34,21 +40,28 @@ def loop():
     msg_id = 0
     # Timestamp of the last message to a group
     last_public = 0
+    # Get the refresh interval from Config
+    refresh_interval = float(CFG.get("cfg", "refresh_interval"))
 
     while status == 0:
+        lights = int(sensor.getValue())
+        # TODO: Implement projector current sensing
+        projector = 0
+        timestamp = time.time()
+        database.addData(timestamp, lights, projector)
         # Get a new messages from server
         new_msg = recieve(msg_id)
 
         if len(new_msg) > 0:
             # Handle the messages and get return parameters
-            param = handle(new_msg, last_public, int(sensor.getValue()))
+            param = handle(new_msg, last_public, lights, database)
             # Update the ID of the next wanted message
             if param[0] >= 0:
                 msg_id = param[0]
             # Update the timestamp of last group message
             last_public = param[1]
 
-        time.sleep(float(CFG.get("cfg", "refresh_interval")))
+        time.sleep(refresh_interval)
 
 def send(text, reciever):
     """ Send a Telegram message """
@@ -58,20 +71,31 @@ def send(text, reciever):
     post_fields = urllib.urlencode({'text': text, 'chat_id' : reciever})
     if DEBUG:
         print reciever
-    # TODO implement check of send was OK
-    urllib.urlopen(url, post_fields)
+    # Try to send the message
+    try:
+        result = json.load(urllib.urlopen(url, post_fields))
+    except IOError as ex:
+        print "Check your internet connection and bot API-key: ", ex
+        return 1
+    if result['ok'] is True:
+        return True
+    else:
+        print ("Message send failed:"), result
+        return False
 
 def recieve(offset):
     """ Check for incoming messages """
     url = 'https://api.telegram.org/'+ CFG.get("botapi", "api_key") + '/getUpdates'
     post_fields = urllib.urlencode({'offset': int(offset), 'allowed_updates': ["message"]})
-    if DEBUG:
-        print "offset is", offset
     jsoni = urllib.urlopen(url, post_fields)
     info = json.load(jsoni)
+    if DEBUG:
+        print "offset is", offset
+        print info
     return info['result']
 
-def handle(messages, last_group_post, light_status):
+
+def handle(messages, last_group_post, light_status, database):
     """ Handles an array of messages """
     result = [-1, last_group_post]
     # Iterate through recieved messages
@@ -104,16 +128,20 @@ def handle(messages, last_group_post, light_status):
                 if light_status:
                     send("Valot ovat päällä", obj['message']['chat']['id'])
                 else:
-                    send("Valot eivät ole päällä", obj['message']['chat']['id'])
+                    last = database.lastLights()
+                    send("Valot olivat edellisen kerran päällä " \
+                    + str(last), obj['message']['chat']['id'])
             # Respond in private chat
             elif int(light_status):
                 send("Valot ovat päällä", obj['message']['from']['id'])
             else:
-                send("Valot eivät ole päällä", obj['message']['from']['id'])
+                last = database.lastLights()
+                send("Valot olivat edellisen kerran päällä " \
+                    + str(last), obj['message']['from']['id'])
         result[0] = obj["update_id"]+1
     result[1] = (last_group_post)
     return result
 
 print "Starting the bot"
-loop()
+loop(init())
 print "Bot exited"
