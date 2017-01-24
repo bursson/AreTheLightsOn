@@ -1,5 +1,5 @@
 # AreTheLightsOn
-A simple python based Telegram Bot. Runs on Onion Omega2 and check if the lights are on or when they were last on.
+A simple python based Telegram Bot. Runs on [Onion Omega2](https://onion.io/) and checks if the lights are on, or when they were last on.
 
 ## Get started
 
