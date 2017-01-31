@@ -89,3 +89,4 @@ ENV/
 .ropeproject
 default.ini
 bot.db
+.vscode/

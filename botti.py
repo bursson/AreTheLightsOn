@@ -8,8 +8,19 @@ import urllib
 import time
 import ConfigParser
 import json
+import logging
+import sys
+import socket
 from database import Database
 import onionGpio
+
+
+reload(sys)
+sys.setdefaultencoding('utf-8')
+socket.setdefaulttimeout(2)
+
+logging.basicConfig(filename='/root/botti.log', level=logging.DEBUG)
+logging.debug('Starting')
 
 CFG = ConfigParser.RawConfigParser()
 # Use absolute path to your script when using init.d
@@ -100,6 +111,7 @@ def handle(messages, last_group_post, light_status, database):
     result = [-1, last_group_post]
     # Iterate through recieved messages
     for i in range(0, len(messages)):
+        # Double check that there is messages
         if i >= len(messages):
             if DEBUG:
                 print "No object"
@@ -107,41 +119,78 @@ def handle(messages, last_group_post, light_status, database):
                 result[0] = messages[i-1]['message']['update_id']+1
             break
         obj = messages[i]
+
+        # Update the ID to remember which messages have been processed
+        result[0] = obj["update_id"]+1
         if DEBUG:
             print obj
+
+        # If the message is not text, skip
         if not "text" in obj['message'].keys():
             if DEBUG:
                 print "Not a text message"
-            result[0] = obj["update_id"]+1
             continue
-            # Check if the message contained a command for us
-        if (obj['message']['text'].lower() == '/valot') or \
-         (obj['message']['text'].lower() == '/valot@pkvalobot'):
-            # Check if the message was on a channel and if the bot is allowed to respond
-            if (int(CFG.get("cfg", 'post_on_channels'))) and \
+
+        # Check if the message contained a command for us
+        command = obj['message']['text'].lower()
+
+        # Command to tell light status
+        msg = ""
+        if command == '/valot' or command == '/valot@pkvalobot':
+
+            if int(light_status):
+                msg = "Valot ovat päällä"
+            else:
+                last = database.lastLights()
+                msg = "".join("Valot olivat edellisen kerran päällä " + str(last))
+        # Command to tell coffee status
+        elif command == '/kahvi' or command == '/kahvi@pkvalobot':
+            keitto, levy = getcoffee()
+            msg = "".join("Keitetty: " + keitto + "\nLevy viimeksi päällä: " + levy)
+
+        # Not a command, skip
+        else:
+            continue
+        # Check if we want to respond to the poster or to a channel
+        if (int(CFG.get("cfg", 'post_on_channels'))) and \
             ((obj['message']['chat']['type'] == 'group') or \
             (obj['message']['chat']['type'] == 'supergroup')) and \
             (time.time() - last_group_post > int(CFG.get("cfg", 'channel_post_interval'))):
-                if DEBUG:
-                    print "Posting to group", obj['message']['chat']['id']
-                last_group_post = time.time()
-                if light_status:
-                    send("Valot ovat päällä", obj['message']['chat']['id'])
-                else:
-                    last = database.lastLights()
-                    send("Valot olivat edellisen kerran päällä " \
-                    + str(last), obj['message']['chat']['id'])
-            # Respond in private chat
-            elif int(light_status):
-                send("Valot ovat päällä", obj['message']['from']['id'])
-            else:
-                last = database.lastLights()
-                send("Valot olivat edellisen kerran päällä " \
-                    + str(last), obj['message']['from']['id'])
-        result[0] = obj["update_id"]+1
+            # To a chat
+            addr = obj['message']['chat']['id']
+            last_group_post = time.time()
+        else:
+            # To the poster
+            addr = obj['message']['from']['id']
+        # If we got a message and a destination, try to send
+        if addr and msg:
+            try:
+                send(msg, addr)
+            except IOError as ex:
+                logging.debug("Message send failed!")
+                logging.debug(ex)
+                # Message respond failed, mark message as unhandled
+                result[0] = result[0]-1
+                break
     result[1] = (last_group_post)
     return result
 
-print "Starting the bot"
-loop(init())
-print "Bot exited"
+def getcoffee():
+    """ Get coffee status """
+    url = CFG.get("cfg", 'coffee_bot_url')
+    try:
+        result = json.load(urllib.urlopen(url))
+        result = result[0]
+        print result['keitto'], result['levy']
+        return result['keitto'], result['levy']
+    except IOError:
+        logging.debug("No result from coffee sensor")
+        return "kahvisensori ei vastannut", "kahvisensori ei vastannut"
+
+logging.debug("Starting the bot")
+try:
+    loop(init())
+except Exception as ex:
+    logging.debug(ex)
+    raise
+logging.debug("Bot exited")
