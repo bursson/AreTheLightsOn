@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 A simple Telegram bot
@@ -19,7 +20,8 @@ reload(sys)
 sys.setdefaultencoding('utf-8')
 socket.setdefaulttimeout(2)
 
-logging.basicConfig(filename='/root/botti.log', level=logging.DEBUG)
+logging.basicConfig(filename='/root/botti.log', level=logging.DEBUG,
+                    format='%(asctime)s %(message)s')
 logging.debug('Starting')
 
 CFG = ConfigParser.RawConfigParser()
@@ -30,7 +32,7 @@ DEBUG = int(CFG.get("cfg", "DEBUG"))
 
 def init():
     """ Initialize the bot by creating or connecting to a database """
-    database = Database("bot.db")
+    database = Database("bot.db", int(CFG.get("cfg", "dbtype")))
     return database
 
 def loop(database):
@@ -181,16 +183,20 @@ def getcoffee():
     try:
         result = json.load(urllib.urlopen(url))
         result = result[0]
-        print result['keitto'], result['levy']
         return result['keitto'], result['levy']
     except IOError:
         logging.debug("No result from coffee sensor")
         return "kahvisensori ei vastannut", "kahvisensori ei vastannut"
 
 logging.debug("Starting the bot")
-try:
-    loop(init())
-except Exception as ex:
-    logging.debug(ex)
-    raise
+
+def main(db):
+    try:
+        loop(db)
+    except Exception as ex:
+        logging.debug(ex)
+        main(db)
+        
+
+main(init())
 logging.debug("Bot exited")
